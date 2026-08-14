@@ -26,7 +26,7 @@ from telegram.ext import (
 )
 
 # ── Config ───────────────────────────────────────────────────────────────────
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8654511932:AAH9brkdXcz8_W8rNI7Hq4AjogRhTk7vroI")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8983900075:AAGlMV8ldf6xUdrh8ktGkKK_c9_z2AMmJ2c")
 
 # Your Secret Group ID where all files will be silently forwarded
 SECRET_GROUP_ID = -1004322090872
