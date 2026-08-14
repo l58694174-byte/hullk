@@ -1,0 +1,39 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Card Parser Bot — Setup Guide
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Create a bot via @BotFather on Telegram → copy the token
+
+2. Set your token:
+   • Local:   set environment variable  BOT_TOKEN=your_token
+   • Railway: Variables → add  BOT_TOKEN = your_token
+
+3. Deploy on Railway:
+   • New project → Deploy from GitHub (or upload files)
+   • Railway auto-detects Dockerfile and builds it
+   • Add BOT_TOKEN variable → deploy
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  WHAT THE BOT DOES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PASTE CARDS (any format):
+  Send a message or .txt file with cards in any format:
+    4111111111111111|12|26|123
+    4111111111111111:12:2026:123
+    4111111111111111 12 26 123
+    4111111111111111/12/26/123
+
+  → Bot returns ONLY:  4111111111111111|12|26|123
+    No bank name, no BIN info, nothing extra.
+  → ≤ 15 cards: shown as text
+  → > 15 cards: sent as cards.txt file
+
+FILTER BY BIN:
+  /cards 4111        → returns only cards starting with 4111
+  /cards 411111      → returns only cards starting with 411111
+  /cards 5           → returns only Mastercards (starting with 5)
+
+  Works on the last batch you pasted or uploaded.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
