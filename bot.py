@@ -3,7 +3,7 @@ import re
 import logging
 import asyncio
 from io import BytesIO
-from typing import Dict, Set, List, Optional
+from typing import Dict, Set, List
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -37,13 +37,13 @@ _SEP = r"[\|:,/\s]+"
 
 CARD_RE = re.compile(
     r"(?<!\d)"
-    r"(\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{1,7})"   # card number
+    r"(\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{1,7})"
     + _SEP
-    + r"(0?[1-9]|1[0-2])"                                 # month 1-12
+    + r"(0?[1-9]|1[0-2])"
     + _SEP
-    + r"(\d{2,4})"                                         # year 2 or 4 digits
+    + r"(\d{2,4})"
     + _SEP
-    + r"(\d{3,4})"                                         # cvv 3-4 digits
+    + r"(\d{3,4})"
     + r"(?!\d)",
     re.MULTILINE,
 )
@@ -58,7 +58,7 @@ def extract_cards(text: str) -> List[str]:
     for m in CARD_RE.finditer(text):
         card  = _clean_num(m.group(1))
         month = m.group(2).zfill(2)
-        year  = m.group(3)[-2:]        # always 2-digit
+        year  = m.group(3)[-2:]
         cvv   = m.group(4)
         if not card.isdigit() or not (13 <= len(card) <= 19):
             continue
@@ -226,7 +226,6 @@ async def cmd_scr(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode="HTML"
     )
 
-    # Note: Telegram Bot API cannot read arbitrary channel history.
     await asyncio.sleep(3)
     await update.message.reply_text(
         "⚠️ <b>Notice:</b>\n"
@@ -400,7 +399,6 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     uid = user.id
     chat_id = msg.chat_id
 
-    # If in Merge Mode
     if uid in _merge_buffer:
         if not text: return
         cards = extract_cards(text)
@@ -411,7 +409,6 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await msg.reply_text("❌ No cards found in this forwarded message.")
         return
 
-    # Normal immediate processing
     if not text: return
 
     if uid not in _fwd_buf:
@@ -433,7 +430,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     uid = update.effective_user.id
 
-    # If in Merge Mode
     if uid in _merge_buffer:
         cards = extract_cards(text)
         if cards:
@@ -443,7 +439,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.message.reply_text("❌ No cards found in this text.")
         return
 
-    # Normal immediate processing
     cards = extract_cards(text)
     if not cards:
         await update.message.reply_text(
@@ -480,7 +475,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("❌ No cards found in the file.")
         return
 
-    # If in Merge Mode
     if uid in _merge_buffer:
         _merge_buffer[uid].extend(cards)
         await update.message.reply_text(f"➕ Added <b>{len(cards)}</b> cards to merge buffer. (Total: {len(_merge_buffer[uid])})", parse_mode="HTML")
